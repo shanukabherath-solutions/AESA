@@ -1,9 +1,7 @@
 # UI states
 
-No browser was available in the build environment, so there are no pixel screenshots. The dashboard was
-type-checked, built, and served through the Vite proxy against the live API, and the pages below render
-exactly the data shown (taken from a real run of `scripts/demo_e2e.py`). Add real captures to `docs/screenshots/`
-(see the list in that folder's README).
+Real screenshots of the running dashboard are in [`docs/screenshots/`](screenshots/README.md). The text renderings below describe
+the same states and use data from a real run of `scripts/demo_e2e.py`.
 
 ## Gate tracker (every task page)
 The one persistent visual: the task's progress through the state machine with the two human barriers.

