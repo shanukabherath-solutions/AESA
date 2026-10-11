@@ -2,7 +2,7 @@
 
 # AESA
 
-**A permission-restricted AI repository agent.**
+**AI Execution Security Agent**
 It inspects code, runs approved checks in a sandbox, and proposes fixes, but it can never merge,
 push to your default branch, or deploy without explicit human approval.
 
