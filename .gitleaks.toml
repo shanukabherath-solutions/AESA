@@ -1,0 +1,7 @@
+title = "AESA gitleaks config"
+[extend]
+useDefault = true
+[allowlist]
+description = "Intentional, obviously fake fixtures used by tests and docs"
+paths = ['''backend/tests/.*''', '''docs/example-audit-log\.txt''']
+regexes = ['''(?i)(sk-test-key|ghp_a{36}|sk-abcdefghijklmnopqrstuvwxyz)''']

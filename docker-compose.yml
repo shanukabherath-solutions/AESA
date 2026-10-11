@@ -1,0 +1,89 @@
+# docker compose up --build
+#   Frontend: http://localhost:5173   Backend: http://localhost:8000   API docs: http://localhost:8000/docs
+name: aesa
+
+# ONE definition of the sandbox image: the tag Compose builds is, by construction, the tag the backend runs.
+# (`environment:` outranks `env_file:`, so a stale SANDBOX_IMAGE in .env cannot cause a mismatch.)
+x-sandbox-image: &sandbox_image aesa-sandbox:latest
+
+services:
+  # Builds the sandbox image once (the container itself exits immediately).
+  sandbox-image:
+    build:
+      context: ./sandbox
+      args:
+        # Keep in step with SANDBOX_TRIVY_TMPFS (MB); the build fails if the baked Trivy DB would not fit.
+        TRIVY_TMPFS_MB: ${TRIVY_TMPFS_MB:-1800}
+    image: *sandbox_image
+    environment:
+      SANDBOX_TRIVY_TMPFS: ${SANDBOX_TRIVY_TMPFS:-1800m}
+      SANDBOX_TRIVY_MEMORY: ${SANDBOX_TRIVY_MEMORY:-3g}
+    command: ["true"]
+    restart: "no"
+
+  # The backend never mounts the raw Docker socket. This proxy exposes only container/image endpoints.
+  # NOTE: it cannot filter request *bodies*; see docs/threat-model.md ("backend compromise").
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:0.3.0
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      POST: 1
+      INFO: 1
+      EXEC: 0
+      VOLUMES: 0
+      NETWORKS: 0
+      SERVICES: 0
+      SWARM: 0
+      SECRETS: 0
+      BUILD: 0
+      COMMIT: 0
+      AUTH: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [internal]
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    env_file: [.env]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-sqlite:////data/secureai.db}
+      DOCKER_HOST: tcp://docker-proxy:2375
+      SANDBOX_BACKEND: docker
+      SANDBOX_IMAGE: *sandbox_image
+      WORKSPACE_ROOT: /workspaces
+      WORKSPACE_HOST_ROOT: ${WORKSPACE_HOST_DIR:?set WORKSPACE_HOST_DIR (absolute host path) in .env}
+      REPOS_ROOT: /data/repos
+      DEMO_REPO_SOURCE: /seed/demo-repository
+      DEMO_REPO_DEST: /data/repos/demo-repo
+      CORS_ORIGINS: http://localhost:5173
+    volumes:
+      - backend-data:/data
+      - ${WORKSPACE_HOST_DIR}:/workspaces      # same directory the sandbox containers bind-mount from
+      - ./demo-repository:/seed/demo-repository:ro
+    ports: ["8000:8000"]
+    depends_on:
+      sandbox-image: { condition: service_completed_successfully }
+      docker-proxy: { condition: service_started }
+    networks: [internal, default]
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    environment:
+      VITE_PROXY_TARGET: http://backend:8000
+    ports: ["5173:5173"]
+    depends_on: [backend]
+    restart: unless-stopped
+
+volumes:
+  # Holds the database and the registered repositories. The name is pinned (not derived from the project name) so the
+  # data survives project renames. Before the rename, Compose created `secureai-agent_backend-data`; to keep using that
+  # data set BACKEND_DATA_VOLUME=secureai-agent_backend-data in .env (see docs/deployment.md, "Upgrading from SecureAI-Agent").
+  backend-data:
+    name: ${BACKEND_DATA_VOLUME:-aesa_backend-data}
+
+networks:
+  internal:
+    internal: true   # docker-proxy has no route to the internet

@@ -1,0 +1,27 @@
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+@import "tailwindcss";
+@config "../tailwind.config.js";
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body { @apply bg-ink text-text font-sans antialiased; font-size: 14px; line-height: 1.5; }
+  :focus-visible { outline: 2px solid theme("colors.gate"); outline-offset: 2px; border-radius: 4px; }
+  ::selection { background: rgba(110, 168, 254, 0.3); }
+  code, pre { @apply font-mono; }
+}
+
+@layer components {
+  .btn { @apply inline-flex items-center justify-center gap-2 rounded-md border border-rule bg-raised px-3 py-1.5 text-sm font-medium text-text transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40; }
+  .btn-primary { @apply border-gate/60 bg-gate/15 text-gate hover:bg-gate/25; }
+  .btn-ok { @apply border-ok/50 bg-ok/15 text-ok hover:bg-ok/25; }
+  .btn-danger { @apply border-deny/50 bg-deny/10 text-deny hover:bg-deny/20; }
+  .input { @apply w-full rounded-md border border-rule bg-ink px-3 py-1.5 text-sm text-text placeholder:text-faint; }
+  .th { @apply px-3 py-2 text-left text-xs font-medium text-dim; }
+  .td { @apply px-3 py-2 align-top; }
+}
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

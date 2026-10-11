@@ -1,0 +1,17 @@
+[project]
+name = "demo-user-service"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+[tool.ruff]
+# `app` is this project's own package. Without this, Ruff classifies it as first-party or third-party depending on the
+# directory it is launched from (the project root vs. the repo), so import-order results would differ between runs.
+src = ["."]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.mypy]
+python_version = "3.12"
+warn_unused_ignores = true

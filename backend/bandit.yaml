@@ -1,0 +1,3 @@
+# B101 asserts (type narrowing only); B404/B603/B607: subprocess is shell-free and argv comes from the command registry.
+skips: [B101, B404, B603, B607]
+exclude_dirs: [tests, alembic]

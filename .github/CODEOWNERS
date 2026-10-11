@@ -1,0 +1,6 @@
+# Changes to security-critical code and CI need an owner review (enable "Require review from Code Owners").
+/backend/app/policy/      @your-org/security-reviewers
+/backend/app/sandbox/     @your-org/security-reviewers
+/backend/app/approvals/   @your-org/security-reviewers
+/.github/                 @your-org/security-reviewers
+/sandbox/                 @your-org/security-reviewers
